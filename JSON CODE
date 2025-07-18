@@ -1,0 +1,337 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://gnews.io/api/v4/top-headlines",
+        "options": {}
+      },
+      "id": "d003cf89-4d15-4ad2-8dc5-1e2693dffafc",
+      "name": "Fetch GNews Articles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        0,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "options": {}
+      },
+      "id": "d8f9388d-ab1a-4628-add0-c42930ee9b4e",
+      "name": "Fetch Popular YouTube Videos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        240,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "options": {}
+      },
+      "id": "aac3e7a3-ba05-40e9-8b54-79b8fca29a4e",
+      "name": "Fetch Competitor Videos (Physics Wallah)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        480,
+        48
+      ],
+      "notes": "Fetches the latest videos from a competitor channel to analyze their content strategy."
+    },
+    {
+      "parameters": {
+        "url": "https://www.reddit.com/r/JEENEETards/hot.json",
+        "options": {}
+      },
+      "id": "851faf2c-5b80-4e68-a193-b87916903ac2",
+      "name": "Fetch Reddit Posts (r/JEENEETards)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        720,
+        48
+      ],
+      "notes": "Fetches top posts from a student community to understand what they are currently discussing."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Explicitly get data from all previous nodes by name\nconst gnewsData = $getNode(\"Fetch GNews Articles\").json;\nconst youtubeData = $getNode(\"Fetch Popular YouTube Videos\").json;\nconst competitorData = $getNode(\"Fetch Competitor Videos (Physics Wallah)\").json;\nconst redditData = $getNode(\"Fetch Reddit Posts (r/JEENEETards)\").json;\n\n// Pre-process and clean the data for the AI\nconst processedData = {\n  gnews_headlines: gnewsData.articles.map(a => ({ title: a.title, description: a.description })),\n  popular_youtube_videos: youtubeData.items.map(i => i.snippet.title),\n  competitor_videos: competitorData.items.map(i => i.snippet.title),\n  student_discussions: redditData.data.children.map(p => p.data.title)\n};\n\nreturn { json: processedData };"
+      },
+      "id": "f10a2fd0-9c2e-4e95-b8b5-1c9f1e26bf77",
+      "name": "Pre-process All Data for AI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        48
+      ],
+      "notes": "Combines and cleans data from all four sources into a single, focused object for the AI."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-goog-api-key",
+              "value": "AIzaSyDmUObUfaxgYeLYeBXTzrhPbTkOGfOG5-c"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"contents\": [\n    {\n      \"role\": \"user\",\n      \"parts\": [\n        {\n          \"text\": \"You are a Vedantu Content Strategist AI. Your goal is to find strategic content gaps. Analyze the following four data sources:\\n1. GNews Headlines: To understand current events.\\n2. Popular YouTube Videos: To see what is already successful.\\n3. Competitor's Recent Videos: To understand their strategy.\\n4. Student Discussions on Reddit: To hear the authentic voice of students.\\n\\nYour task is to synthesize this information and identify 5-7 video topics that are relevant but have low competition. For each topic, provide a title, keywords, a rationale explaining the content gap, and a target class/subject. Output ONLY a valid JSON array of objects, with no other text or formatting.\\n\\nDATA:\\nGNews Headlines: {{ JSON.stringify($json.gnews_headlines) }}\\nPopular YouTube Videos: {{ JSON.stringify($json.popular_youtube_videos) }}\\nCompetitor's Recent Videos: {{ JSON.stringify($json.competitor_videos) }}\\nStudent Discussions on Reddit: {{ JSON.stringify($json.student_discussions) }}\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "15151afd-bd43-4e2c-89bc-6f52fe2bd7b5",
+      "name": "Analyze with Gemini AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        48
+      ],
+      "notes": "Uses Google's Gemini model to analyze the pre-processed data and suggest content ideas."
+    },
+    {
+      "parameters": {
+        "jsCode": "// The Gemini response text is nested inside the 'candidates' array.\nconst content = $json.candidates[0].content.parts[0].text;\n\ntry {\n  // Attempt to parse the JSON content from the AI's response.\n  const topics = JSON.parse(content);\n  // Create a new n8n item for each topic suggestion.\n  return topics.map(topic => ({ json: topic }));\n} catch (error) {\n  // If parsing fails, log the error and stop the workflow.\n  console.error(\"Failed to parse Gemini JSON response:\", error);\n  return [];\n}"
+      },
+      "id": "98378c95-b53a-4e3f-8413-02d65b576e91",
+      "name": "Parse & Extract Topics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        48
+      ],
+      "notes": "Parses the JSON output from the Gemini AI response."
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of $items) {\n  const json = item.json;\n  if (typeof json.keywords === 'string') {\n    json.keywords = json.keywords.split(',').map(k => k.trim()).filter(Boolean);\n  } else if (!Array.isArray(json.keywords)) {\n    json.keywords = [];\n  }\n  json.title = String(json.title || '');\n  json.rationale = String(json.rationale || '');\n  json.class_subject = String(json.class_subject || '');\n}\nreturn $items;"
+      },
+      "id": "11801df6-92da-4196-8489-fb38b697f8ce",
+      "name": "Normalize Topic Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ YOUR_GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": "Content Ideas",
+        "columns": {
+          "column": [
+            {
+              "columnName": "title",
+              "columnValue": "={{$json.title}}"
+            },
+            {
+              "columnName": "keywords",
+              "columnValue": "={{$json.keywords.join(', ')}}"
+            },
+            {
+              "columnName": "rationale",
+              "columnValue": "={{$json.rationale}}"
+            },
+            {
+              "columnName": "class_subject",
+              "columnValue": "={{$json.class_subject}}"
+            },
+            {
+              "columnName": "suggested_date",
+              "columnValue": "={{ $now.toISODate() }}"
+            },
+            {
+              "columnName": "status",
+              "columnValue": "Pending Review"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "74ce5ffa-9571-492b-aebe-13bdf80a53ab",
+      "name": "Add Ideas to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1920,
+        48
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "nuAnOu2htB23jJlp",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "if ($execution.index === 0) {\n  return $items;\n} \nreturn null;"
+      },
+      "id": "c62baec1-9531-4087-b15f-1a7652210a45",
+      "name": "Run Once Trigger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "text": "✅ New content ideas have been generated and added to the content calendar.\n\nPlease review them here: [Link to your Google Sheet]",
+        "otherOptions": {}
+      },
+      "id": "f92f495f-0c88-40a7-828c-dd985d74beae",
+      "name": "Notify Content Strategy Team (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        48
+      ],
+      "webhookId": "94e88f4c-4842-4387-a318-bcc9e9a94b54",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "EW907g4gzfSqWPhX",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Fetch GNews Articles": {
+      "main": [
+        [
+          {
+            "node": "Fetch Popular YouTube Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Popular YouTube Videos": {
+      "main": [
+        [
+          {
+            "node": "Fetch Competitor Videos (Physics Wallah)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Competitor Videos (Physics Wallah)": {
+      "main": [
+        [
+          {
+            "node": "Fetch Reddit Posts (r/JEENEETards)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Reddit Posts (r/JEENEETards)": {
+      "main": [
+        [
+          {
+            "node": "Pre-process All Data for AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pre-process All Data for AI": {
+      "main": [
+        [
+          {
+            "node": "Analyze with Gemini AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze with Gemini AI": {
+      "main": [
+        [
+          {
+            "node": "Parse & Extract Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Extract Topics": {
+      "main": [
+        [
+          {
+            "node": "Normalize Topic Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Topic Data": {
+      "main": [
+        [
+          {
+            "node": "Add Ideas to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Ideas to Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "Run Once Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Once Trigger": {
+      "main": [
+        [
+          {
+            "node": "Notify Content Strategy Team (Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fa03343c1ad827bf78143faea3ee47645007aa07b8f1ec88f13f49e8879759fa"
+  }
+}
